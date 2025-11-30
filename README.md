@@ -42,4 +42,5 @@ mqtt:
 E con questo è tutto, se avete dubbi o rilevate problemi aprite pure un'issue su github.
 
 PS: versioni diverse del software del pannello templari potrebbero portare variazioni nella rilevazione io ho la 1.8.55 se notate anomalie con altre versioni fatemi sapere e vedremo cosa si può fare
-credit a Carlo Cavallin per il primo reverse engineering del protocollo templari di qualche anno fa, io ho solo "attualizzato" la sua tecnica!
+
+Credit a Carlo Cavallin per il primo reverse engineering del protocollo templari di qualche anno fa, io ho solo "attualizzato" la sua tecnica!
