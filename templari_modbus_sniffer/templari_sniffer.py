@@ -9,12 +9,13 @@ import sys
 sys.stdout.reconfigure(line_buffering=True)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+# --- PARSING ARGOMENTI ---
 parser = argparse.ArgumentParser()
-parser.add_argument("--bridge-host")
-parser.add_argument("--bridge-port", type=int)
-parser.add_argument("--rooms")  # elenco separato da virgola
-parser.add_argument("--mqtt-host")
-parser.add_argument("--mqtt-port", type=int)
+parser.add_argument("--bridge-host", required=True)
+parser.add_argument("--bridge-port", required=True, type=int)
+parser.add_argument("--rooms", required=True)  # elenco separato da virgola
+parser.add_argument("--mqtt-host", required=True)
+parser.add_argument("--mqtt-port", required=True, type=int)
 parser.add_argument("--mqtt-user", default="")
 parser.add_argument("--mqtt-pass", default="")
 parser.add_argument("--log", action="store_true")
@@ -33,7 +34,7 @@ MQTT_PASS = args.mqtt_pass
 LOG_ENABLED = args.log
 LOGFILE = "/config/modbus_templari_sniffer.log"
 
-# --- MQTT ---
+# --- MQTT SETUP ---
 client = mqtt.Client()
 if MQTT_USER:
     client.username_pw_set(MQTT_USER, MQTT_PASS)
@@ -49,8 +50,11 @@ except Exception as e:
 def log_raw(data_hex):
     if LOG_ENABLED:
         ts = datetime.now().isoformat()
-        with open(LOGFILE, "a") as f:
-            f.write(f"{ts} {data_hex}\n")
+        try:
+            with open(LOGFILE, "a") as f:
+                f.write(f"{ts} {data_hex}\n")
+        except Exception as e:
+            print(f"[{ts}] ERROR writing log: {e}")
 
 def parse_modbus(data):
     """
@@ -81,44 +85,74 @@ def parse_modbus(data):
         i += 1
     return None
 
-# --- SOCKET ---
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.settimeout(5)
+# --- SOCKET INIT ---
+def connect_bridge():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(5)
+    try:
+        print(f"[{datetime.now().isoformat()}] Connecting to bridge device {BRIDGE_HOST}:{BRIDGE_PORT}")
+        sock.connect((BRIDGE_HOST, BRIDGE_PORT))
+        print(f"[{datetime.now().isoformat()}] Connected to bridge device")
+    except Exception as e:
+        print(f"[{datetime.now().isoformat()}] ERROR: Cannot connect to bridge device: {e}")
+        time.sleep(2)
+        return connect_bridge()
+    return sock
 
-try:
-    print(f"[{datetime.now().isoformat()}] Connecting to bridge device {BRIDGE_HOST}:{BRIDGE_PORT}")
-    sock.connect((BRIDGE_HOST, BRIDGE_PORT))
-    print(f"[{datetime.now().isoformat()}] Connected to bridge device")
-except Exception as e:
-    print(f"[{datetime.now().isoformat()}] ERROR: Cannot connect to bridge device: {e}")
-    exit(1)
-
+sock = connect_bridge()
 buffer = bytearray()
 
 # --- LOOP PRINCIPALE ---
 while True:
     try:
         data = sock.recv(2048)
+        # print(f"[{datetime.now().isoformat()}] Loop tick, bytes received: {len(data)}")
     except socket.timeout:
         data = b""
     except Exception as e:
         print(f"[{datetime.now().isoformat()}] ERROR receiving data: {e}")
         time.sleep(1)
+        sock = connect_bridge()
         continue
 
+    # Se non arriva nulla
     if not data:
-        time.sleep(0.05)
+        print(f"[{datetime.now().isoformat()}] No data received, socket closed? Reconnecting...")
+        try:
+            sock.close()
+        except:
+            pass
+        time.sleep(10)
+        sock = connect_bridge()
+        buffer = bytearray()
+        continue
+
+    # --- FILTRO HTML/504 ---
+    try:
+        text_data = data.decode(errors="ignore")
+    except:
+        text_data = ""
+
+    if "<html>" in text_data or "504" in text_data:
+        print(f"[{datetime.now().isoformat()}] Bridge sent HTML/504, reconnecting...")
+        buffer = bytearray()
+        try:
+    	    sock.close()
+        except:
+    	    pass
+        time.sleep(10)
+        sock = connect_bridge()
         continue
 
     hex_data = data.hex()
     log_raw(hex_data)
     buffer.extend(data)
 
+    # --- PARSING MODBUS ---
     while True:
         parsed = parse_modbus(buffer)
         if not parsed:
             break
-
         slave, temp, hum, end_idx = parsed
         buffer = buffer[end_idx:]
 
@@ -131,4 +165,3 @@ while True:
             print(f"[{ts}] [Room {slave}] Temp={temp}°C Hum={hum}%")
 
     time.sleep(0.01)
-
