@@ -13,7 +13,7 @@ esempio installazione "spartana" vicino a room :-)
 
 NOTA BENE: mettere le mani sul bus dei sensori è una cosa che va fatta solo da chi ha un minimo di esperienza con i cablaggi. Ovviamente non mi assumo nessuna responsabilità in caso di eventuali danni.
 
-Ricordo che il bus modbus è una catena, quindi il seguente cablaggio che vi troverete tipicamente in un sensore room, va separato e replicato tale e quale con un nuovo spezzone di filo al dispositivo di sniffing assicurandosi di mantenere i dispositivi in una catena
+Ricordo che il bus modbus è una catena, quindi il seguente cablaggio che vi troverete tipicamente in un sensore room, va separato (a rete spenta) e replicato tale e quale con un nuovo spezzone di filo al dispositivo di sniffing assicurandosi di mantenere i dispositivi in una catena
 ![modbus-room](https://github.com/user-attachments/assets/66cdac2f-b0d2-41eb-ba7f-427a74b6712c)
 se avete più spazio potete metterlo anche vicino ad una floor, si consiglia di non mettere il dispositivo alla fine della catena ma in una qualsiasiasi posizione in mezzo, ricordo che è fondamentale non sbagliare la polarità o invertire i fili A e B, e non serve collegare la terra del dispositivo di sniffing, è buona pratica collegare fra loro eventuali calze dei fili del bus per garantire una buona schermatura.
 
