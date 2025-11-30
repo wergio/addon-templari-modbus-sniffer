@@ -1,0 +1,27 @@
+configuration:
+  bridge_host:
+    name: Host / IP Bride Modbus/TCP
+    description: >-
+      Host o IP del dispositivo che sniffa il Modbus
+  bridge_port:
+    name: Porta Bride Modbus/TCP
+  rooms:
+    name: Elenco sensori Room da monitorare
+    description: >-
+      separato da virgola, nessuno spazio
+  mqtt_host:
+    name: Host / IP Broker MQTT
+    description: >-
+      lasciare default per HA OS, in alternativa specificare
+  mqtt_port:
+    name: Porta Broker MQTT
+  mqtt_user:
+    name: Utente MQTT
+    description: >-
+      Specifica se necessari autenticazione
+  mqtt_pass:
+    name: Password MQTT
+  log_enabled:
+    name: Abilita Log Modbus
+    description: >-
+      Se abilitato, salva tutte le informazioni grezze del MODBUS su /config/modbus_templari_sniffer.log (consuma molto spazio)

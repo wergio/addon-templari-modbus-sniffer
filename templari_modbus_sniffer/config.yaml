@@ -1,0 +1,39 @@
+name: Templari Modbus Sniffer
+version: dev
+slug: templari_modbus_sniffer
+description: "Sniffer Modbus Templari per HA"
+url: https://github.com/wergio/addon-templari-modbus-sniffer
+
+arch:
+  - armv7
+  - armhf
+  - amd64
+  - aarch64
+
+startup: services
+boot: auto
+host_network: true
+
+map:
+  - "config:/config"
+
+options:
+  bridge_host: "192.168.1.51"
+  bridge_port: 8899
+  rooms: "121,122,123,124,125,126,127,128"
+  mqtt_host: "core-mosquitto"
+  mqtt_port: 1883
+  mqtt_user: ""
+  mqtt_pass: ""
+  log_enabled: false
+
+schema:
+  bridge_host: str
+  bridge_port: int
+  rooms: str
+  mqtt_host: str
+  mqtt_port: int
+  mqtt_user: str
+  mqtt_pass: str
+  log_enabled: bool
+
