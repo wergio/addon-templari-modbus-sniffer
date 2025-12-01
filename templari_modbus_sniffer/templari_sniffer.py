@@ -56,6 +56,15 @@ def log_raw(data_hex):
         except Exception as e:
             print(f"[{ts}] ERROR writing log: {e}")
 
+def safe_publish(topic, payload):
+    ts = datetime.now().isoformat()
+    try:
+        info = client.publish(topic, payload)
+        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+            print(f"[{ts}] MQTT PUBLISH ERROR rc={info.rc} topic={topic}")
+    except Exception as e:
+        print(f"[{ts}] MQTT publish EXCEPTION topic={topic}: {e}")
+
 def parse_modbus(data):
     """
     Cerca nel blocco di byte un possibile frame Modbus RTU di tipo:
@@ -160,8 +169,8 @@ while True:
             ts = datetime.now().isoformat()
             topic_temp = f"templari/room/{slave}/temperature"
             topic_hum  = f"templari/room/{slave}/humidity"
-            client.publish(topic_temp, temp)
-            client.publish(topic_hum, hum)
+            safe_publish(topic_temp, temp)
+            safe_publish(topic_hum, hum)
             print(f"[{ts}] [Room {slave}] Temp={temp}°C Hum={hum}%")
 
     time.sleep(0.01)
