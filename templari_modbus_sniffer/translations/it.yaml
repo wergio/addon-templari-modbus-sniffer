@@ -6,9 +6,9 @@ configuration:
   bridge_port:
     name: "Porta Bride Modbus/TCP"
   rooms:
-    name: "Elenco sensori Room da monitorare"
+    name: "Elenco sensori Room da monitorare (li trovi nel menu avanzate X del pannello HCC)"
     description: >-
-      Elenco delle sonde room da monitorare devi specificare obbligatoriamente i loro id (li trovi nel menu avanzate X del pannello HCC), apri gli oggetti per vedere anche il nome della stanza da associare all'id; saranno usati nei topic MQTT e nella generazione automatica dei sensori MQTT
+      Elenco delle sonde room da monitorare devi specificare obbligatoriamente i loro id, apri gli oggetti per vedere anche il nome della stanza da associare all'id; saranno usati nei topic MQTT e nella generazione automatica dei sensori MQTT
   mqtt_host:
     name: "Host / IP Broker MQTT"
     description: >-
@@ -33,3 +33,4 @@ configuration:
     name: "Abilita Log Modbus"
     description: >-
       Se abilitato, salva tutte le informazioni grezze del MODBUS su modbus_templari_sniffer.log nella stessa cartella di configuration.yaml (non lasciarlo sempre attivo perchè consuma molto spazio)
+
