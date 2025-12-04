@@ -3,7 +3,7 @@ Le pompe di calore Templari hanno recentemente ricevuto un aggiornamento che per
 
 Questo progetto può essere utile se si vogliono recuperare anche questi dati utilizzando un dispositivo hardware per "sniffare" la catena modbus e renderli quindi disponibili ad home assistant come sensori MQTT tramite il broker Mosquitto.
 
-Al momento rilevo solo temperatura e umidità dei sensori room, in futuro ho in mente di aggiungere altre informazioni, anche delle schede floor.
+Al momento rilevo dai sensori room circa ogni 30 secondi i seguenti dati: temperatura, umidità, set point attivo, punto di rugiata, stato (aperto o chiuso) della testina termostatica, in futuro ho in mente di aggiungere altre informazioni delle schede floor.
 
 Il dispositivo che ho utilizzato con successo per questo fine è il DR164 reperibile su aliexpress qui https://it.aliexpress.com/item/1005008220892003.html (attenzione a non confonderlo col DR162 che non va bene). Va inserito fisicamente all'interno della catena modbus dei sensori room per leggere passivamente i messaggi che passano sul bus senza interferire in nessun modo. Esistono molti altri dispositivi simili ma questo ha il vantaggio di essere economico, molto piccolo, facilmente configurabile via wifi e sopratutto si alimenta con la stessa alimentazione dei room, può quindi essere piazzato ovunque, anche all'interno di un cartogesso o in zone difficilmente raggiungibili.
 
@@ -20,26 +20,33 @@ se avete più spazio potete metterlo anche vicino ad una floor, si consiglia di 
 Una volta installato il dispositivo è necessario configurarlo, al seguente link trovate il manuale ufficiale https://www.pusr.com/uploads/20241212/c0e4f462ecead06a7e47e13fee88a488.pdf a pag 8 è spiegato come si entra la prima volta, dopodichè vi consiglio di agganciarlo al vostro WiFi in modalità "STA only", la procedura è abbastanza intuitiva, è necessario dare un ip fisso o da interfaccia o col router per poterlo raggiungere senza problemi. Di seguito le due pagina di settaggi fondamentali per lo sniffing, non usate altri settaggi random per evitare problemi:
 <img width="2777" height="798" alt="schermate" src="https://github.com/user-attachments/assets/7adbf0f7-9e7c-4b96-9f76-8529e97ed5ad" />
 
-Ora bisogna installare questo addon, per farlo andate nell'addon store di HA https://my.home-assistant.io/redirect/supervisor_store cliccate i 3 pallini in alto a destra -> archivi digitali e copiate l'url di questo repository git https://github.com/wergio/addon-templari-modbus-sniffer/ e cliccate aggiungi, vi troverete Templari Modbus Sniffing fra i componenti, installatelo, aprite la configurazione e inserite i dati necessari, ricordo che dovete già avere installato Mosquitto, se non ce l'avete ci sono decine di tutorial che spiegano come fare, dopodichè avviate il componente, consiglio anche watchdog e avvio automatico, nel registro vedete subito se si collega e come rileva le temperatura ogni circa 30 secondi.
+Ora bisogna installare questo addon, per farlo andate nell'addon store di HA https://my.home-assistant.io/redirect/supervisor_store cliccate i 3 pallini in alto a destra -> archivi digitali e copiate l'url di questo repository git https://github.com/wergio/addon-templari-modbus-sniffer/ e cliccate aggiungi, vi troverete Templari Modbus Sniffing fra i componenti, installatelo, aprite la configurazione e inserite i dati necessari, fra cui, fondamentale, l'elenco delle sonde ROOM da monitorare, ricordo che dovete già avere installato Mosquitto, se non ce l'avete ci sono decine di tutorial che spiegano come fare, dopodichè avviate il componente, consiglio anche watchdog e avvio automatico, nel registro vedete subito se si collega e come rileva le temperatura ogni circa 30 secondi.
 
-L'ultimo passaggio sarà quello di configurare i vari sensori MQTT, ecco un esempio di un sensore di temperatura e uno di umidità da mettere in configuration.yaml o dove volete voi, gli id delle varie stanze (nell'esempio 121) li dovete sapere voi e li trovate nel menu avanzate X dell'HCC
+L'addon si occupa di generare automaticamente in HA i vari sensori MQTT sulla base degli id e nomi stanza che gli avete fornito in fase di configurazione. Una volta create le entità al primo avvio potete tranquillamente rinominare anche gli entity_id come preferita e continueranno sempre ad aggiornarsi.
 
+Una card molto comoda per mostrare queste entità è la <a href="https://github.com/benct/lovelace-multiple-entity-row">Multiple Entity Row Card</a>
+<img width="1588" height="613" alt="multi-entity" src="https://github.com/user-attachments/assets/52b80ce7-d5cd-43a4-ab02-df7ceba446f5" />
+vi lascio un esempio con una riga:
 ```yaml
-mqtt:
-  sensor:
-    - unique_id: templari_temperatura_cucina
-      name: "Temperatura Cucina"
-      state_topic: "templari/room/121/temperature"
-      device_class: temperature
-      unit_of_measurement: "°C"
-      state_class: measurement
-    - unique_id: templari_umidita_cucina
-      name: "Umidità Cucina"
-      state_topic: "templari/room/121/humidity"
-      device_class: humidity
-      unit_of_measurement: "%"
-      state_class: measurement
+type: entities
+entities:
+  - type: custom:multiple-entity-row
+    name: Sala
+    entity: sensor.templari_p1_room_122_temperature
+    state_header: Temperatura
+    icon: mdi:thermometer-water
+    entities:
+      - entity: sensor.templari_p1_room_122_humidity
+        name: Umidità
+      - entity: sensor.templari_p1_room_122_dew_point
+        name: Punto Rugiada
+      - entity: sensor.templari_p1_room_122_set_point
+        name: Set Point
+      - entity: binary_sensor.templari_p1_room_122_request
+        name: Testina
 ```
+
+Se volete potete anche disabilitare la generazione automatica delle entità mqtt tramite l'apposito flag nella configurazione dell'addon, così potete farlo voi manualmente in configuration.yaml o dove volete voi.
 
 E con questo è tutto, se avete dubbi o rilevate problemi aprite pure un'issue su github.
 
