@@ -5,34 +5,31 @@ from datetime import datetime
 import argparse
 import paho.mqtt.client as mqtt
 import warnings
+import json
+import os
 import sys
+
 sys.stdout.reconfigure(line_buffering=True)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-# --- PARSING ARGOMENTI ---
-parser = argparse.ArgumentParser()
-parser.add_argument("--bridge-host", required=True)
-parser.add_argument("--bridge-port", required=True, type=int)
-parser.add_argument("--rooms", required=True)  # elenco separato da virgola
-parser.add_argument("--mqtt-host", required=True)
-parser.add_argument("--mqtt-port", required=True, type=int)
-parser.add_argument("--mqtt-user", default="")
-parser.add_argument("--mqtt-pass", default="")
-parser.add_argument("--log", action="store_true")
-args = parser.parse_args()
+# --- OPTIONS ---
+OPTIONS_FILE = "/data/options.json"
 
-# --- CONFIG ---
-BRIDGE_HOST = args.bridge_host
-BRIDGE_PORT = args.bridge_port
-ROOMS = [int(r.strip()) for r in args.rooms.split(",")]
+with open(OPTIONS_FILE, "r") as f:
+    options = json.load(f)
 
-MQTT_BROKER = args.mqtt_host
-MQTT_PORT = args.mqtt_port
-MQTT_USER = args.mqtt_user
-MQTT_PASS = args.mqtt_pass
+BRIDGE_HOST = options.get("bridge_host")
+BRIDGE_PORT = options.get("bridge_port", 8899)
+ROOMS = options.get("rooms", [])
+MQTT_HOST = options.get("mqtt_host", "core-mosquitto")
+MQTT_PORT = options.get("mqtt_port", 1883)
+MQTT_USER = options.get("mqtt_user", "")
+MQTT_PASS = options.get("mqtt_pass", "")
+AUTOGEN_MQTT = options.get("autogen_mqtt_entities", True)
+MQTT_PREFIX = options.get("mqtt_prefix", "templari")
+LOG_ENABLED = options.get("log_enabled", False)
 
-LOG_ENABLED = args.log
-LOGFILE = "/config/modbus_templari_sniffer.log"
+LOGFILE = "/homeassistant/modbus_templari_sniffer.log"
 
 # --- MQTT SETUP ---
 client = mqtt.Client()
@@ -40,21 +37,23 @@ if MQTT_USER:
     client.username_pw_set(MQTT_USER, MQTT_PASS)
 
 try:
-    client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    client.connect(MQTT_HOST, MQTT_PORT, 60)
     client.loop_start()
-    print(f"[{datetime.now().isoformat()}] Connected to MQTT broker {MQTT_BROKER}:{MQTT_PORT}")
+    print(f"[{datetime.now().isoformat()}] Connected to MQTT broker {MQTT_HOST}:{MQTT_PORT}")
 except Exception as e:
     print(f"[{datetime.now().isoformat()}] MQTT connection failed:", e)
+    sys.exit(1) 
 
 # --- FUNZIONI ---
-def log_raw(data_hex):
-    if LOG_ENABLED:
-        ts = datetime.now().isoformat()
-        try:
-            with open(LOGFILE, "a") as f:
-                f.write(f"{ts} {data_hex}\n")
-        except Exception as e:
-            print(f"[{ts}] ERROR writing log: {e}")
+def log_raw(data):
+    hex_data = data.hex()
+    ts = datetime.now().isoformat()
+    try:
+        with open(LOGFILE, "a") as f:
+            f.write(f"{ts} {data_hex}\n")
+    except Exception as e:
+        print(f"[{ts}] ERROR writing log: {e}")
+        sys.exit(1) 
 
 def safe_publish(topic, payload):
     ts = datetime.now().isoformat()
@@ -65,33 +64,66 @@ def safe_publish(topic, payload):
     except Exception as e:
         print(f"[{ts}] MQTT publish EXCEPTION topic={topic}: {e}")
 
+def crc16_modbus(data: bytes) -> int:
+    crc = 0xFFFF
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            if crc & 1:
+                crc = (crc >> 1) ^ 0xA001
+            else:
+                crc >>= 1
+    return crc
+
 def parse_modbus(data):
     """
-    Cerca nel blocco di byte un possibile frame Modbus RTU di tipo:
-    [slave][0x03][byte_count][payload...]
-    Restituisce (slave, temperature, humidity) se trova una risposta valida
+    Cerca nel blocco di byte un possibile frame Modbus RTU del sensore room:
+    Restituisce (slave, temperature, humidity, ecc) se trova una risposta valida
     oppure None.
     """
     # Scorro il blob per trovare pattern possibile
+    TOTAL_LEN = 43
     i = 0
-    while i <= len(data) - 5:
-        slave = data[i]
-        fc = data[i+1]
-        if fc != 0x03:
+    while i <= len(data) - TOTAL_LEN:
+        frame = data[i:i+TOTAL_LEN]
+
+        # Controllo funzione del primo messaggio
+        if frame[1] != 0x03:
             i += 1
             continue
-        byte_count = data[i+2]
-        end = i + 3 + byte_count
-        if end <= len(data):
-            # payload estraibile
-            payload = data[i+3:end]
-            if len(payload) >= 4:
-                temp_raw = (payload[0] << 8) | payload[1]
-                hum_raw  = (payload[2] << 8) | payload[3]
-                temp = temp_raw / 10.0
-                hum = hum_raw / 10.0
-                return slave, temp, hum, end  # ritorno anche end index per avanzare
-        i += 1
+
+        # --- Primo CRC (header) ---
+        crc1_received = frame[6] | (frame[7] << 8)
+        crc1_calculated = crc16_modbus(frame[0:6])
+        if crc1_received != crc1_calculated:
+            i += 1
+            continue
+
+        # --- Secondo CRC (messaggio payload) ---
+        second_msg = frame[8:]  # dal byte subito dopo il primo CRC fino alla fine
+        crc2_received = second_msg[-2] | (second_msg[-1] << 8)
+        crc2_calculated = crc16_modbus(second_msg[:-2])
+        if crc2_received != crc2_calculated:
+            i += 1
+            continue
+
+        # --- Estrazione payload ---
+        payload = second_msg[3:-2]  # skip dati iniziali del secondo messaggio, poi escludi CRC finale
+
+        temp_raw = (payload[0] << 8) | payload[1]
+        hum_raw  = (payload[2] << 8) | payload[3]
+        dew_raw  = (payload[4] << 8) | payload[5]
+        set_raw  = (payload[18] << 8) | payload[19]
+        req_raw  = (payload[20] << 8) | payload[21]
+
+        temp = temp_raw / 10.0
+        hum  = hum_raw / 10.0
+        dew  = dew_raw / 10.0
+        set = set_raw / 10.0
+        req = 1 if req_raw != 0 else 0
+
+        return (frame[0], temp, hum, dew, set, req, i + TOTAL_LEN)
+
     return None
 
 # --- SOCKET INIT ---
@@ -104,13 +136,66 @@ def connect_bridge():
         print(f"[{datetime.now().isoformat()}] Connected to bridge device")
     except Exception as e:
         print(f"[{datetime.now().isoformat()}] ERROR: Cannot connect to bridge device: {e}")
-        time.sleep(2)
-        return connect_bridge()
+        sys.exit(1) 
     return sock
 
 sock = connect_bridge()
 buffer = bytearray()
 
+room_ids = [int(room["id"]) for room in ROOMS]
+room_names = {int(room["id"]): room["name"] for room in ROOMS}
+room_list_str = ", ".join(f"{rid} ({room_names[rid]})" for rid in room_ids)
+print(f"[{datetime.now().isoformat()}] Inizio monitoraggio ROOM: {room_list_str}")
+
+if AUTOGEN_MQTT:
+    for room in ROOMS:
+        rid = room["id"]
+        rname = room["name"]
+    
+        # sensor da creare
+        sensors = [
+            ("temperature", "Temperatura", "°C", "temperature"),
+            ("humidity", "Umidità", "%", "humidity"),
+            ("dew_point", "Punto di Rugiada", "°C", "temperature"),
+            ("set_point", "Set Point", "°C", "temperature"),
+        ]
+    
+        for key, label, unit, device_class in sensors:
+            topic = f"homeassistant/sensor/{MQTT_PREFIX}_room_{rid}_{key}/config"
+            payload = {
+                "unique_id": f"{MQTT_PREFIX}_room_{rid}_{key}",
+                "default_entity_id": f"sensor.{MQTT_PREFIX}_room_{rid}_{key}",
+                "name": f"{label} {rname}",
+                "state_topic": f"{MQTT_PREFIX}/room/{rid}/{key}",
+                "unit_of_measurement": unit,
+                "device_class": device_class,
+                "state_class": "measurement",
+                "expire_after": 300
+            }
+            result = client.publish(topic, json.dumps(payload), retain=True)
+            if result.rc != mqtt.MQTT_ERR_SUCCESS:
+                print(f"[{datetime.now().isoformat()}] ERROR publishing discovery for sensor {s['unique_id']}")
+                sys.exit(1) 
+    
+        # binary sensor da creare
+        topic_bin = f"homeassistant/binary_sensor/{MQTT_PREFIX}_room_{rid}_request/config"
+        payload_bin = {
+            "unique_id": f"{MQTT_PREFIX}_room_{rid}_request",
+            "default_entity_id": f"binary_sensor.{MQTT_PREFIX}_room_{rid}_request",
+            "name": f"Testina {rname}",
+            "state_topic": f"{MQTT_PREFIX}/room/{rid}/request",
+            "payload_on": "1",
+            "payload_off": "0",
+            "device_class": "opening",
+            "expire_after": 300
+        }
+        result = client.publish(topic_bin, json.dumps(payload_bin), retain=True)
+        if result.rc != mqtt.MQTT_ERR_SUCCESS:
+            print(f"[{datetime.now().isoformat()}] ERROR publishing discovery for binary sensor {binary['unique_id']}")
+            sys.exit(1) 
+
+    print(f"[{datetime.now().isoformat()}] Generati automaticamente sensori MQTT")
+    
 # --- LOOP PRINCIPALE ---
 while True:
     try:
@@ -153,8 +238,9 @@ while True:
         sock = connect_bridge()
         continue
 
-    hex_data = data.hex()
-    log_raw(hex_data)
+    if LOG_ENABLED:
+        log_raw(data)
+    
     buffer.extend(data)
 
     # --- PARSING MODBUS ---
@@ -162,15 +248,19 @@ while True:
         parsed = parse_modbus(buffer)
         if not parsed:
             break
-        slave, temp, hum, end_idx = parsed
+        slave, temp, hum, dew, set, req, end_idx = parsed
         buffer = buffer[end_idx:]
 
-        if slave in ROOMS:
+        if slave in room_ids:
+            room_name = room_names[slave]
             ts = datetime.now().isoformat()
-            topic_temp = f"templari/room/{slave}/temperature"
-            topic_hum  = f"templari/room/{slave}/humidity"
-            safe_publish(topic_temp, temp)
-            safe_publish(topic_hum, hum)
-            print(f"[{ts}] [Room {slave}] Temp={temp}°C Hum={hum}%")
+            
+            safe_publish(f"{MQTT_PREFIX}/room/{slave}/temperature", temp)
+            safe_publish(f"{MQTT_PREFIX}/room/{slave}/humidity", hum)
+            safe_publish(f"{MQTT_PREFIX}/room/{slave}/dew_point", dew)
+            safe_publish(f"{MQTT_PREFIX}/room/{slave}/set_point", set)
+            safe_publish(f"{MQTT_PREFIX}/room/{slave}/request", req)
+            
+            print(f"[{ts}] [Room {slave} {room_name}] Temp={temp}°C Hum={hum}% Dew={dew}°C Set Point={set}°C Req={req}")
 
     time.sleep(0.01)

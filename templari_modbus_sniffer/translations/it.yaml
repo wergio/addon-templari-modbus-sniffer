@@ -8,20 +8,28 @@ configuration:
   rooms:
     name: Elenco sensori Room da monitorare
     description: >-
-      ID sensori room da monitorare, separati da virgola (nessuno spazio), li trovi nel menu avanzate X del pannello HCC
+      Elenco delle sonde room da monitorare devi specificare obbligatoriamente i loro id (li trovi nel menu avanzate X del pannello HCC), apri gli oggetti per vedere anche il nome della stanza da associare all'id; saranno usati nei topic MQTT e nella generazione automatica dei sensori MQTT
   mqtt_host:
     name: Host / IP Broker MQTT
     description: >-
-      lasciare default per HA OS, in alternativa specificare
+      lasciare "core-mosquitto" per HA OS, in alternativa specificare
   mqtt_port:
     name: Porta Broker MQTT
   mqtt_user:
     name: Utente MQTT
     description: >-
-      Specifica se necessari autenticazione
+      Specifica eventuali credenziali necessarie per l'autenticazione
   mqtt_pass:
     name: Password MQTT
+  autogen_mqtt_entities:
+    name: Genera sensori MQTT
+    description: >-
+      Se abilitato, genererà automaticamente i sensori MQTT in Home Assistant, altrimenti dovrai aggiungerli tu a mano editando la configurazione di HA
+  mqtt_prefix:
+    name: Prefisso MQTT
+    description: >-
+      Prefisso usato come parte iniziale sia per i topic MQTT che per gli eventuali sensori autogenerati (per entity_id e unique_id)
   log_enabled:
     name: Abilita Log Modbus
     description: >-
-      Se abilitato, salva tutte le informazioni grezze del MODBUS su /config/modbus_templari_sniffer.log (consuma molto spazio)
+      Se abilitato, salva tutte le informazioni grezze del MODBUS su modbus_templari_sniffer.log nella stessa cartella di configuration.yaml (non lasciarlo sempre attivo perchè consuma molto spazio)
