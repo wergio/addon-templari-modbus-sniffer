@@ -31,11 +31,13 @@ mqtt:
       name: "Temperatura Cucina"
       state_topic: "templari/room/121/temperature"
       device_class: temperature
+      unit_of_measurement: "°C"
       state_class: measurement
     - unique_id: templari_umidita_cucina
       name: "Umidità Cucina"
       state_topic: "templari/room/121/humidity"
       device_class: humidity
+      unit_of_measurement: "%"
       state_class: measurement
 ```
 
@@ -44,3 +46,7 @@ E con questo è tutto, se avete dubbi o rilevate problemi aprite pure un'issue s
 PS: versioni diverse del software del pannello templari potrebbero portare variazioni nella rilevazione io ho la 1.8.55 se notate anomalie con altre versioni fatemi sapere e vedremo cosa si può fare
 
 Credit a Carlo Cavallin per il primo reverse engineering del protocollo templari di qualche anno fa, io ho solo "attualizzato" la sua tecnica!
+
+Di seguito riporto altri device che mi sono stati segnalati come compatibili con il mio software:
+
+![ws](https://github.com/user-attachments/assets/c6f55eca-b17d-4c34-8ac4-54cc0f8e08f7)
