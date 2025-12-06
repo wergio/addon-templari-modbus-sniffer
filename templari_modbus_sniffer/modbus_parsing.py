@@ -104,7 +104,7 @@ def parse_modbus_floor(data):
         
         relay_1_raw  = (payload[32] << 8) | payload[33]
         relay_2_raw  = (payload[34] << 8) | payload[35]
-        relay_3_raw  = (payload[36] << 8) | payload[36]
+        relay_3_raw  = (payload[36] << 8) | payload[37]
         relay_4_raw  = (payload[38] << 8) | payload[39]
         relay_5_raw  = (payload[40] << 8) | payload[41]
         relay_6_raw  = (payload[42] << 8) | payload[43]
