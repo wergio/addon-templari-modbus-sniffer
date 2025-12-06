@@ -1,6 +1,6 @@
 ---
 name: Templari Modbus Sniffer
-version: dev
+version: 1.0
 slug: templari_modbus_sniffer
 description: "Sniffer Modbus Templari"
 url: https://github.com/wergio/addon-templari-modbus-sniffer
@@ -33,6 +33,31 @@ options:
       name: "Camera Letto Matrimoniale"
     - id: 128
       name: "Bagno Piccolo"
+  floors:
+    - id: 120
+      name: "Centrale"
+      circulator_sensor: true
+      mixing_sensor: true
+      relay_1_sensor: true
+      relay_2_sensor: false
+      relay_3_sensor: false
+      relay_4_sensor: false
+      relay_5_sensor: false
+      relay_6_sensor: false
+      relay_7_sensor: false
+      relay_8_sensor: false
+    - id: 133
+      name: "Collettore"
+      circulator_sensor: false
+      mixing_sensor: false
+      relay_1_sensor: true
+      relay_2_sensor: true
+      relay_3_sensor: true
+      relay_4_sensor: true
+      relay_5_sensor: true
+      relay_6_sensor: true
+      relay_7_sensor: true
+      relay_8_sensor: true
   mqtt_host: "core-mosquitto"
   mqtt_port: 1883
   mqtt_user: ""
@@ -46,6 +71,19 @@ schema:
   rooms:
     - id: match(^\d{1,3}$)
       name: str
+  floors:
+    - id: match(^\d{1,3}$)
+      name: str
+      circulator_sensor: bool
+      mixing_sensor: bool
+      relay_1_sensor: bool
+      relay_2_sensor: bool
+      relay_3_sensor: bool
+      relay_4_sensor: bool
+      relay_5_sensor: bool
+      relay_6_sensor: bool
+      relay_7_sensor: bool
+      relay_8_sensor: bool
   mqtt_host: str
   mqtt_port: int
   mqtt_user: str

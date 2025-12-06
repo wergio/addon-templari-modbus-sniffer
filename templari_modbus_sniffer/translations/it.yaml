@@ -9,6 +9,8 @@ configuration:
     name: "Elenco sensori Room da monitorare (li trovi nel menu avanzate X del pannello HCC)"
     description: >-
       Elenco delle sonde room da monitorare devi specificare obbligatoriamente i loro id, apri gli oggetti per vedere anche il nome della stanza da associare all'id; saranno usati nei topic MQTT e nella generazione automatica dei sensori MQTT
+  floors:
+    name: "Elenco sensori Floor da monitorare (può essere anche vuoto)"
   mqtt_host:
     name: "Host / IP Broker MQTT"
     description: >-
