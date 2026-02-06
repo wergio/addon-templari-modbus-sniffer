@@ -1,7 +1,7 @@
-# Addon Home Assistant per sniffer Modbus Templari
+# App Home Assistant per sniffer Modbus Templari
 Le pompe di calore Templari hanno recentemente ricevuto un aggiornamento che permette di interfacciarsi via modbus per vedere i principali parametri della PdC (<a href="https://github.com/wergio/templari-modbus-home-assistant">vedi questo altro mio progetto</a> per l'interfacciamento con HA) ma ci sono alcune cose, come la lettura delle temperature e umidità rilevate dalle sonde room, che non è ancora possibile leggere da domotica.
 
-Questo progetto può essere utile se si vogliono recuperare anche questi dati utilizzando un dispositivo hardware per "sniffare" la catena modbus e renderli quindi disponibili ad home assistant come sensori MQTT tramite il broker Mosquitto.
+Questo progetto è un'app (ex "Addon") per HA che può essere utile se si vogliono recuperare anche questi dati utilizzando un dispositivo hardware per "sniffare" la catena modbus e renderli quindi disponibili ad home assistant come sensori MQTT tramite il broker Mosquitto.
 
 Al momento rilevo dai sensori room circa ogni 30 secondi i seguenti dati: temperatura, umidità, set point attivo, punto di rugiata, stato (aperto o chiuso) della testina termostatica; delle schede floor leggo le temperature di mandata/ritorno, il delta t, la percentuale del circolatore e di miscelazione, più lo stato dei relè; in futuro potrei inserire altri sensori o dati, ma questi sono i principali di sicura utilità per la maggior parte di noi.
 
@@ -20,9 +20,9 @@ se avete più spazio potete metterlo anche vicino ad una floor, si consiglia di 
 Una volta installato il dispositivo è necessario configurarlo, al seguente link trovate il manuale ufficiale https://www.pusr.com/uploads/20241212/c0e4f462ecead06a7e47e13fee88a488.pdf a pag 8 è spiegato come si entra la prima volta, dopodichè vi consiglio di agganciarlo al vostro WiFi in modalità "STA only", la procedura è abbastanza intuitiva, è necessario dare un ip fisso o da interfaccia o col router per poterlo raggiungere senza problemi. Di seguito le due pagine di settaggi fondamentali per lo sniffing, non usate altri settaggi random per evitare problemi:
 <img width="2777" height="798" alt="schermate" src="https://github.com/user-attachments/assets/7adbf0f7-9e7c-4b96-9f76-8529e97ed5ad" />
 
-Ora bisogna installare questo addon, per farlo andate nell'addon store di HA https://my.home-assistant.io/redirect/supervisor_store cliccate i 3 pallini in alto a destra -> archivi digitali e copiate l'url di questo repository git https://github.com/wergio/addon-templari-modbus-sniffer/ e cliccate aggiungi, vi troverete Templari Modbus Sniffing fra i componenti, installatelo e prima di avviarlo aprite la configurazione per inserite i dati necessari, fra cui, fondamentale, l'elenco delle sonde ROOM e FLOOR da monitorare (faccio presente che con la matita si può cambiare il nome della stanza e scegliere se abilitare o disabilitare alcuni sensori delle floor), ricordo che dovete già avere installato il broker MQTT Mosquitto, se non ce l'avete ci sono decine di tutorial in rete che spiegano come fare, dopodichè avviate il componente, consiglio anche watchdog e avvio automatico, nel registro vedete subito se si collega e come rileva i dati ogni circa 30 secondi.
+Ora bisogna installare questa app, per farlo andate nell'app store di HA https://my.home-assistant.io/redirect/supervisor_store cliccate i 3 pallini in alto a destra -> archivi digitali e copiate l'url di questo repository git https://github.com/wergio/addon-templari-modbus-sniffer/ e cliccate aggiungi, vi troverete Templari Modbus Sniffing fra i componenti, installatelo e prima di avviarlo aprite la configurazione per inserite i dati necessari, fra cui, fondamentale, l'elenco delle sonde ROOM e FLOOR da monitorare (faccio presente che con la matita si può cambiare il nome della stanza e scegliere se abilitare o disabilitare alcuni sensori delle floor), ricordo che dovete già avere installato il broker MQTT Mosquitto, se non ce l'avete ci sono decine di tutorial in rete che spiegano come fare, dopodichè avviate il componente, consiglio anche watchdog e avvio automatico, nel registro vedete subito se si collega e come rileva i dati ogni circa 30 secondi.
 
-L'addon si occupa di generare automaticamente in HA i vari sensori MQTT sulla base degli id e nomi stanza che gli avete fornito in fase di configurazione. Una volta create le entità al primo avvio potete tranquillamente rinominare anche gli entity_id come preferite e continueranno sempre ad aggiornarsi.
+L'app si occupa di generare automaticamente in HA i vari sensori MQTT sulla base degli id e nomi stanza che gli avete fornito in fase di configurazione. Una volta create le entità al primo avvio potete tranquillamente rinominare anche gli entity_id come preferite e continueranno sempre ad aggiornarsi.
 
 Una card molto comoda per mostrare alcune di queste entità è la <a href="https://github.com/benct/lovelace-multiple-entity-row">Multiple Entity Row Card</a>
 <img width="1588" height="613" alt="multi-entity" src="https://github.com/user-attachments/assets/52b80ce7-d5cd-43a4-ab02-df7ceba446f5" />
@@ -46,7 +46,7 @@ entities:
         name: Testina
 ```
 
-Se volete potete anche disabilitare la generazione automatica delle entità mqtt tramite l'apposito flag nella configurazione dell'addon, così potete farlo voi manualmente in configuration.yaml o dove volete voi.
+Se volete potete anche disabilitare la generazione automatica delle entità mqtt tramite l'apposito flag nella configurazione dell'app, così potete farlo voi manualmente in configuration.yaml o dove volete voi.
 
 E con questo è tutto, se avete dubbi o rilevate problemi aprite pure un'issue su github.
 
