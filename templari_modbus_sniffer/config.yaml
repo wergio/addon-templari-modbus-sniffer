@@ -1,6 +1,6 @@
 ---
 name: Templari Modbus Sniffer
-version: 1.0
+version: 1.0.1
 slug: templari_modbus_sniffer
 description: "Sniffer Modbus Templari"
 url: https://github.com/wergio/addon-templari-modbus-sniffer

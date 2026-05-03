@@ -42,8 +42,7 @@ def log_raw(data):
         with open(LOGFILE, "a") as f:
             f.write(f"{ts} {hex_data}\n")
     except Exception as e:
-        print(f"[{ts}] ERROR writing log: {e}")
-        sys.exit(1) 
+        print(f"[{ts}] ERROR writing log: {e}") 
 
 def safe_publish(topic, payload):
     ts = datetime.now().isoformat()
@@ -57,13 +56,14 @@ def safe_publish(topic, payload):
 def connect_bridge():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(5)
-    try:
-        print(f"[{datetime.now().isoformat()}] Connecting to bridge device {BRIDGE_HOST}:{BRIDGE_PORT}")
-        sock.connect((BRIDGE_HOST, BRIDGE_PORT))
-        print(f"[{datetime.now().isoformat()}] Connected to bridge device")
-    except Exception as e:
-        print(f"[{datetime.now().isoformat()}] ERROR: Cannot connect to bridge device: {e}")
-        sys.exit(1) 
+    while True:
+        try:
+            print(f"[{datetime.now().isoformat()}] Connecting to bridge device {BRIDGE_HOST}:{BRIDGE_PORT}")
+            sock.connect((BRIDGE_HOST, BRIDGE_PORT))
+            print(f"[{datetime.now().isoformat()}] Connected to bridge device")
+            break
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ERROR: Cannot connect to bridge device: {e}, retry in 30 seconds")
     return sock
 
 # --- MQTT SETUP ---
@@ -71,13 +71,14 @@ client = mqtt.Client()
 if MQTT_USER:
     client.username_pw_set(MQTT_USER, MQTT_PASS)
 
-try:
-    client.connect(MQTT_HOST, MQTT_PORT, 60)
-    client.loop_start()
-    print(f"[{datetime.now().isoformat()}] Connected to MQTT broker {MQTT_HOST}:{MQTT_PORT}")
-except Exception as e:
-    print(f"[{datetime.now().isoformat()}] MQTT connection failed:", e)
-    sys.exit(1) 
+while True:
+    try:
+        client.connect(MQTT_HOST, MQTT_PORT, 60)
+        client.loop_start()
+        print(f"[{datetime.now().isoformat()}] Connected to MQTT broker {MQTT_HOST}:{MQTT_PORT}")
+        break
+    except Exception as e:
+        print(f"[{datetime.now().isoformat()}] MQTT connection failed: {e}, retry in 30 seconds")
 
 sock = connect_bridge()
 buffer = bytearray()
@@ -123,7 +124,6 @@ if AUTOGEN_MQTT:
             result = client.publish(topic, json.dumps(payload), retain=True)
             if result.rc != mqtt.MQTT_ERR_SUCCESS:
                 print(f"[{datetime.now().isoformat()}] ERROR publishing discovery for sensor {payload['unique_id']}")
-                sys.exit(1) 
     
         # binary_sensor da creare sempre
         topic = f"homeassistant/binary_sensor/{MQTT_PREFIX}_room_{rid}_request/config"
@@ -140,7 +140,6 @@ if AUTOGEN_MQTT:
         result = client.publish(topic, json.dumps(payload), retain=True)
         if result.rc != mqtt.MQTT_ERR_SUCCESS:
             print(f"[{datetime.now().isoformat()}] ERROR publishing discovery for sensor {payload['unique_id']}")
-            sys.exit(1) 
 
     for floor in FLOORS:
         fid = floor["id"]
@@ -168,7 +167,6 @@ if AUTOGEN_MQTT:
             result = client.publish(topic, json.dumps(payload), retain=True)
             if result.rc != mqtt.MQTT_ERR_SUCCESS:
                 print(f"[{datetime.now().isoformat()}] ERROR publishing discovery for sensor {payload['unique_id']}")
-                sys.exit(1) 
     
         # sensori opzionali
         if floor_by_id[int(fid)].get("circulator_sensor", False):
@@ -185,7 +183,6 @@ if AUTOGEN_MQTT:
             result = client.publish(topic, json.dumps(payload), retain=True)
             if result.rc != mqtt.MQTT_ERR_SUCCESS:
                 print(f"[{datetime.now().isoformat()}] ERROR publishing discovery for sensor {payload['unique_id']}")
-                sys.exit(1) 
         
         if floor_by_id[int(fid)].get("mixing_sensor", False):
             topic = f"homeassistant/sensor/{MQTT_PREFIX}_floor_{fid}_mixing_percentage/config"
@@ -200,8 +197,7 @@ if AUTOGEN_MQTT:
             }
             result = client.publish(topic, json.dumps(payload), retain=True)
             if result.rc != mqtt.MQTT_ERR_SUCCESS:
-                print(f"[{datetime.now().isoformat()}] ERROR publishing discovery for sensor {payload['unique_id']}")
-                sys.exit(1) 
+                print(f"[{datetime.now().isoformat()}] ERROR publishing discovery for sensor {payload['unique_id']}") 
                 
         # ciclo relè da 1 a 8
         for i in range(1, 8 + 1):
@@ -221,7 +217,6 @@ if AUTOGEN_MQTT:
                 result = client.publish(topic, json.dumps(payload), retain=True)
                 if result.rc != mqtt.MQTT_ERR_SUCCESS:
                     print(f"[{datetime.now().isoformat()}] ERROR publishing discovery for sensor {payload['unique_id']}")
-                    sys.exit(1) 
             
     print(f"[{datetime.now().isoformat()}] Generati automaticamente sensori MQTT")
     
