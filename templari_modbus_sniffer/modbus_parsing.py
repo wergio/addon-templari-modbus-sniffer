@@ -1,4 +1,11 @@
 # -*- coding: utf-8 -*-
+
+# Lunghezza totale (richiesta + risposta) dei frame riconosciuti.
+# Servono anche al chiamante per risalire dall'end_idx restituito
+# alla posizione di inizio del frame dentro al buffer.
+ROOM_FRAME_LEN = 43
+FLOOR_FRAME_LEN = 73
+
 def crc16_modbus(data: bytes) -> int:
     crc = 0xFFFF
     for b in data:
@@ -17,15 +24,18 @@ def parse_modbus_room(data):
     oppure None.
     """
     # Scorro il blob per trovare pattern possibile
-    TOTAL_LEN = 43
+    TOTAL_LEN = ROOM_FRAME_LEN
     i = 0
     while i <= len(data) - TOTAL_LEN:
-        frame = data[i:i+TOTAL_LEN]
 
-        # Controllo funzione del primo messaggio
-        if frame[1] != 0x03:
+        # Controllo funzione del primo messaggio. Va fatto PRIMA della slice:
+        # scarta quasi tutte le posizioni, e affettare TOTAL_LEN byte a ogni
+        # posizione del buffer costa piu' del controllo stesso.
+        if data[i+1] != 0x03:
             i += 1
             continue
+
+        frame = data[i:i+TOTAL_LEN]
 
         # --- Primo CRC (header) ---
         crc1_received = frame[6] | (frame[7] << 8)
@@ -62,16 +72,18 @@ def parse_modbus_room(data):
     return None
     
 def parse_modbus_floor(data):
-    TOTAL_LEN = 73
+    TOTAL_LEN = FLOOR_FRAME_LEN
     i = 0
     while i <= len(data) - TOTAL_LEN:
-        frame = data[i:i+TOTAL_LEN]
 
-        # Controllo funzione del primo messaggio
-        if frame[1] != 0x03:
+        # Controllo funzione del primo messaggio, prima della slice (vedi
+        # parse_modbus_room per il motivo)
+        if data[i+1] != 0x03:
             i += 1
             continue
-        
+
+        frame = data[i:i+TOTAL_LEN]
+
         # l'id deve essere uguale fra due punti della stringa altrimenti scarto
         if frame[0] != frame[12]:
             i += 1

@@ -8,6 +8,7 @@ import paho.mqtt.client as mqtt
 import warnings
 import json
 import os
+import re
 import sys
 import modbus_parsing
 
@@ -17,24 +18,136 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # --- OPTIONS ---
 OPTIONS_FILE = "/data/options.json"
 
-with open(OPTIONS_FILE, "r") as f:
-    options = json.load(f)
+# Intervallo valido per un indirizzo slave Modbus.
+MODBUS_ID_MIN = 1
+MODBUS_ID_MAX = 247
+# Il prefisso finisce sia nei topic MQTT che negli unique_id/entity_id di HA,
+# che ammettono solo lettere, numeri, trattino e underscore.
+PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
-BRIDGE_HOST = options.get("bridge_host")
-BRIDGE_PORT = options.get("bridge_port", 8899)
-ROOMS = options.get("rooms", [])
-FLOORS = options.get("floors", [])
-MQTT_HOST = options.get("mqtt_host", "core-mosquitto")
-MQTT_PORT = options.get("mqtt_port", 1883)
-MQTT_USER = options.get("mqtt_user", "")
-MQTT_PASS = options.get("mqtt_pass", "")
+def config_error(msg):
+    print(f"[{datetime.now().isoformat()}] CONFIG ERROR: {msg}")
+    sys.exit(1)
+
+def config_warning(msg):
+    print(f"[{datetime.now().isoformat()}] CONFIG WARNING: {msg}")
+
+def valid_port(value, field):
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        config_error(f"{field}: '{value}' non e' un numero di porta valido")
+    if not 1 <= port <= 65535:
+        config_error(f"{field}: {port} fuori dall'intervallo 1-65535")
+    return port
+
+def valid_devices(entries, kind, seen):
+    """Scarta le singole voci inutilizzabili invece di far fallire tutto l'addon."""
+    if not isinstance(entries, list):
+        config_error(f"'{kind}s' deve essere una lista")
+    valid = []
+    for pos, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            config_warning(f"{kind} #{pos}: voce non valida, ignorata")
+            continue
+        try:
+            dev_id = int(entry.get("id"))
+        except (TypeError, ValueError):
+            config_warning(f"{kind} #{pos}: id '{entry.get('id')}' non e' un numero, voce ignorata")
+            continue
+        if not MODBUS_ID_MIN <= dev_id <= MODBUS_ID_MAX:
+            config_warning(f"{kind} #{pos}: id {dev_id} fuori dall'intervallo Modbus {MODBUS_ID_MIN}-{MODBUS_ID_MAX}, voce ignorata")
+            continue
+        # Un id Modbus identifica un solo dispositivo sul bus: se compare due
+        # volte (anche fra room e floor) una delle due voci e' sbagliata.
+        if dev_id in seen:
+            config_warning(f"{kind} #{pos}: id {dev_id} gia' usato da {seen[dev_id]}, voce ignorata")
+            continue
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            name = f"{kind.capitalize()} {dev_id}"
+            config_warning(f"{kind} #{pos}: nome vuoto, uso '{name}'")
+        seen[dev_id] = f"{kind} {name}"
+        valid.append(dict(entry, id=dev_id, name=name))
+    return valid
+
+try:
+    with open(OPTIONS_FILE, "r") as f:
+        options = json.load(f)
+except Exception as e:
+    config_error(f"impossibile leggere {OPTIONS_FILE}: {e}")
+
+BRIDGE_HOST = str(options.get("bridge_host") or "").strip()
+if not BRIDGE_HOST:
+    config_error("bridge_host non configurato")
+BRIDGE_PORT = valid_port(options.get("bridge_port", 8899), "bridge_port")
+
+MQTT_HOST = str(options.get("mqtt_host", "core-mosquitto") or "").strip()
+if not MQTT_HOST:
+    config_error("mqtt_host non configurato")
+MQTT_PORT = valid_port(options.get("mqtt_port", 1883), "mqtt_port")
+MQTT_USER = str(options.get("mqtt_user") or "")
+MQTT_PASS = str(options.get("mqtt_pass") or "")
 AUTOGEN_MQTT = options.get("autogen_mqtt_entities", True)
-MQTT_PREFIX = options.get("mqtt_prefix", "templari")
+
+MQTT_PREFIX = str(options.get("mqtt_prefix", "templari") or "").strip()
+if not PREFIX_RE.match(MQTT_PREFIX):
+    config_error(f"mqtt_prefix '{MQTT_PREFIX}': ammessi solo lettere, numeri, '-' e '_'")
+
 LOG_ENABLED = options.get("log_enabled", False)
+
+seen_ids = {}
+ROOMS = valid_devices(options.get("rooms", []), "room", seen_ids)
+FLOORS = valid_devices(options.get("floors", []), "floor", seen_ids)
+if not ROOMS and not FLOORS:
+    config_error("nessuna room o floor valida configurata, non c'e' nulla da monitorare")
 
 LOGFILE = "/homeassistant/modbus_templari_sniffer.log"
 
+# --- TIMING ---
+# Timeout della singola recv(): il bus zitto per qualche secondo NON e' un errore,
+# serve solo a non restare bloccati per sempre dentro la recv.
+RECV_TIMEOUT = 5
+# Secondi senza NESSUN frame valido prima di sospettare una connessione half-open
+# (es. il WiFi del bridge cade e il FIN non arriva mai). Va tenuto ben sopra al
+# ciclo di polling del pannello, altrimenti si riconnette per un semplice ritardo.
+NO_FRAME_TIMEOUT = 180
+# Attesa fra due tentativi di connessione al bridge falliti.
+CONNECT_RETRY_DELAY = 30
+# Backoff prima di riconnettere dopo un errore certo (peer che chiude, errore di
+# rete, pagina HTTP al posto dei dati): evita di ciclare a vuoto se il bridge
+# accetta la connessione e la chiude subito.
+RECONNECT_BACKOFF = 5
+
+# --- BUFFER ---
+# Byte da conservare quando nessun parser aggancia niente. Quando i
+# parser falliscono su un buffer lungo L, ogni posizione i con L-i >= lunghezza
+# del frame e' gia' stata testata, e i byte non cambiano piu': quelle posizioni
+# non potranno mai diventare valide. Resta da verificare solo la coda, che
+# potrebbe contenere un frame ancora incompleto.
+# Va ricavato dal massimo delle lunghezze gestite: se un domani si aggiunge un
+# parser per frame piu' lunghi, questo deve crescere con lui.
+BUFFER_KEEP = max(modbus_parsing.ROOM_FRAME_LEN, modbus_parsing.FLOOR_FRAME_LEN) - 1
+# Ogni quanti secondi riportare quanto traffico non riconosciuto passa sul bus.
+STATS_INTERVAL = 3600
+
 # --- FUNZIONI ---
+def close_socket(sock):
+    if sock is None:
+        return
+    try:
+        sock.close()
+    except Exception:
+        pass
+
+def looks_like_http(data):
+    """
+    Alcuni bridge, quando sono in difficolta', rispondono con una pagina di errore
+    HTTP invece che con i dati seriali.
+    """
+    lowered = data.lower()
+    return b"<html" in lowered or b"http/1." in lowered
+
 def log_raw(data):
     hex_data = data.hex()
     ts = datetime.now().isoformat()
@@ -53,18 +166,25 @@ def safe_publish(topic, payload):
     except Exception as e:
         print(f"[{ts}] MQTT publish EXCEPTION topic={topic}: {e}")
 
-def connect_bridge():
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(5)
+def connect_bridge(old_sock=None):
+    # La socket precedente va sempre chiusa, altrimenti ogni riconnessione
+    # si lascia dietro un file descriptor aperto.
+    close_socket(old_sock)
     while True:
+        # Una socket il cui connect() e' fallito non e' riutilizzabile: va
+        # ricreata a ogni tentativo, altrimenti su Linux i retry successivi
+        # possono fallire per sempre anche quando il bridge torna raggiungibile.
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(RECV_TIMEOUT)
         try:
             print(f"[{datetime.now().isoformat()}] Connecting to bridge device {BRIDGE_HOST}:{BRIDGE_PORT}")
             sock.connect((BRIDGE_HOST, BRIDGE_PORT))
             print(f"[{datetime.now().isoformat()}] Connected to bridge device")
-            break
+            return sock
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ERROR: Cannot connect to bridge device: {e}, retry in 30 seconds")
-    return sock
+            close_socket(sock)
+            print(f"[{datetime.now().isoformat()}] ERROR: Cannot connect to bridge device: {e}, retry in {CONNECT_RETRY_DELAY} seconds")
+            time.sleep(CONNECT_RETRY_DELAY)
 
 # --- MQTT SETUP ---
 client = mqtt.Client()
@@ -78,20 +198,24 @@ while True:
         print(f"[{datetime.now().isoformat()}] Connected to MQTT broker {MQTT_HOST}:{MQTT_PORT}")
         break
     except Exception as e:
-        print(f"[{datetime.now().isoformat()}] MQTT connection failed: {e}, retry in 30 seconds")
+        print(f"[{datetime.now().isoformat()}] MQTT connection failed: {e}, retry in {CONNECT_RETRY_DELAY} seconds")
+        time.sleep(CONNECT_RETRY_DELAY)
 
 sock = connect_bridge()
 buffer = bytearray()
 
+# Vanno definiti sempre, anche a liste vuote: il loop principale li consulta a
+# ogni frame riconosciuto. Gli id sono gia' interi validati da valid_devices().
+room_ids = [room["id"] for room in ROOMS]
+room_by_id = {r["id"]: r for r in ROOMS}
+floor_ids = [floor["id"] for floor in FLOORS]
+floor_by_id = {f["id"]: f for f in FLOORS}
+
 if ROOMS:
-    room_ids = [int(room["id"]) for room in ROOMS]
-    room_by_id = {int(r["id"]): r for r in ROOMS}
     room_list_str = ", ".join(f"{rid} ({room_by_id[rid]['name']})" for rid in room_ids)
     print(f"[{datetime.now().isoformat()}] Monitoraggio ROOM: {room_list_str}")
 
 if FLOORS:
-    floor_ids = [int(floor["id"]) for floor in FLOORS]
-    floor_by_id = {int(f["id"]): f for f in FLOORS}
     floor_list_str = ", ".join(f"{fid} ({floor_by_id[fid]['name']})" for fid in floor_ids)
     print(f"[{datetime.now().isoformat()}] Monitoraggio FLOOR: {floor_list_str}")
 
@@ -221,60 +345,76 @@ if AUTOGEN_MQTT:
     print(f"[{datetime.now().isoformat()}] Generati automaticamente sensori MQTT")
     
 # --- LOOP PRINCIPALE ---
+# Istante dell'ultimo frame Modbus valido: e' su questo che si basa il watchdog,
+# non sulla singola recv() andata in timeout.
+last_frame_ts = time.monotonic()
+last_stats_ts = time.monotonic()
+stats_frames = 0
+stats_discarded = 0
+
 while True:
     try:
         data = sock.recv(2048)
         # print(f"[{datetime.now().isoformat()}] Loop tick, bytes received: {len(data)}")
     except socket.timeout:
-        data = b""
+        # Qualche secondo di silenzio sul bus non e' un errore. Lo diventa solo se
+        # non arriva nessun frame valido per NO_FRAME_TIMEOUT: a quel punto e'
+        # probabile che la connessione sia morta senza che ce ne siamo accorti.
+        if time.monotonic() - last_frame_ts > NO_FRAME_TIMEOUT:
+            print(f"[{datetime.now().isoformat()}] No valid frame for {NO_FRAME_TIMEOUT}s, connection probably half-open, reconnecting...")
+            sock = connect_bridge(sock)
+            buffer = bytearray()
+            last_frame_ts = time.monotonic()
+        continue
     except Exception as e:
         print(f"[{datetime.now().isoformat()}] ERROR receiving data: {e}")
-        time.sleep(1)
-        sock = connect_bridge()
+        time.sleep(RECONNECT_BACKOFF)
+        sock = connect_bridge(sock)
+        buffer = bytearray()
+        last_frame_ts = time.monotonic()
         continue
 
-    # Se non arriva nulla
+    # recv() che restituisce b"" significa che il peer ha chiuso davvero
     if not data:
-        print(f"[{datetime.now().isoformat()}] No data received, socket closed? Reconnecting...")
-        try:
-            sock.close()
-        except:
-            pass
-        time.sleep(10)
-        sock = connect_bridge()
+        print(f"[{datetime.now().isoformat()}] Bridge closed the connection, reconnecting...")
+        time.sleep(RECONNECT_BACKOFF)
+        sock = connect_bridge(sock)
         buffer = bytearray()
-        continue
-
-    # --- FILTRO ERRORE HTML/504 CHE ALCUNI BRIDGE POSSONO DARE OGNI TANTO ---
-    try:
-        text_data = data.decode(errors="ignore")
-    except:
-        text_data = ""
-
-    if "<html>" in text_data or "504" in text_data:
-        print(f"[{datetime.now().isoformat()}] Bridge sent HTML/504, reconnecting...")
-        buffer = bytearray()
-        try:
-    	    sock.close()
-        except:
-    	    pass
-        time.sleep(10)
-        sock = connect_bridge()
+        last_frame_ts = time.monotonic()
         continue
 
     # eventuale log modbus completo
     if LOG_ENABLED:
         log_raw(data)
-    
+
+    # --- FILTRO ERRORE HTML CHE ALCUNI BRIDGE POSSONO DARE OGNI TANTO ---
+    if looks_like_http(data):
+        print(f"[{datetime.now().isoformat()}] Bridge sent an HTTP error page, reconnecting...")
+        time.sleep(RECONNECT_BACKOFF)
+        sock = connect_bridge(sock)
+        buffer = bytearray()
+        last_frame_ts = time.monotonic()
+        continue
+
     buffer.extend(data)
 
     # --- PARSING MODBUS ---
     while True:
 
-        if (parsed := modbus_parsing.parse_modbus_room(buffer)) is not None:
-        
-            slave, temp, hum, dew, set, req, end_idx = parsed
+        # I parser scandiscono TUTTO il buffer, quindi vanno provati
+        # tutti e va consumato il frame che inizia PRIMA.
+        parsed_room = modbus_parsing.parse_modbus_room(buffer)
+        parsed_floor = modbus_parsing.parse_modbus_floor(buffer)
+
+        start_room = parsed_room[-1] - modbus_parsing.ROOM_FRAME_LEN if parsed_room is not None else None
+        start_floor = parsed_floor[-1] - modbus_parsing.FLOOR_FRAME_LEN if parsed_floor is not None else None
+
+        if parsed_room is not None and (parsed_floor is None or start_room <= start_floor):
+
+            slave, temp, hum, dew, set, req, end_idx = parsed_room
             buffer = buffer[end_idx:]
+            last_frame_ts = time.monotonic()
+            stats_frames += 1
 
             if slave in room_ids:
                 ts = datetime.now().isoformat()
@@ -287,10 +427,12 @@ while True:
             
                 print(f"[{ts}] [Room {slave} {room_by_id[slave]['name']}] Temp={temp}°C Hum={hum}% Dew={dew}°C Set Point={set}°C Req={req}")
 
-        elif (parsed := modbus_parsing.parse_modbus_floor(buffer)) is not None:
+        elif parsed_floor is not None:
 
-            slave, temp_flow, temp_return, temp_delta_t, perc_circulator, perc_mix, relay_1, relay_2, relay_3, relay_4, relay_5, relay_6, relay_7, relay_8, end_idx = parsed
+            slave, temp_flow, temp_return, temp_delta_t, perc_circulator, perc_mix, relay_1, relay_2, relay_3, relay_4, relay_5, relay_6, relay_7, relay_8, end_idx = parsed_floor
             buffer = buffer[end_idx:]
+            last_frame_ts = time.monotonic()
+            stats_frames += 1
 
             if slave in floor_ids:
                 ts = datetime.now().isoformat()
@@ -332,6 +474,21 @@ while True:
                 print(f"[{ts}] [Floor {slave} {floor_by_id[slave]['name']}] Flow={temp_flow}°C Return={temp_return}°C DeltaT={temp_delta_t}°C Circulator={perc_circulator}% Mix={perc_mix}% Relays={relay_1} {relay_2} {relay_3} {relay_4} {relay_5} {relay_6} {relay_7} {relay_8}")
 
         else:
+            # Nessun frame agganciato: tutto quello che precede la coda e' gia'
+            # stato testato senza successo e non potra' mai diventare valido,
+            # quindi si puo' buttare. Senza questa potatura il buffer cresce fino
+            # al prossimo frame utile, e i parser lo riscandiscono tutto a ogni
+            # recv (misurato: 6 KB di picco e 46x di CPU in piu').
+            if len(buffer) > BUFFER_KEEP:
+                stats_discarded += len(buffer) - BUFFER_KEEP
+                buffer = buffer[-BUFFER_KEEP:]
             break
+
+    if time.monotonic() - last_stats_ts >= STATS_INTERVAL:
+        print(f"[{datetime.now().isoformat()}] Statistiche ultima ora: {stats_frames} frame decodificati, "
+              f"{stats_discarded} byte di traffico non riconosciuto scartati")
+        last_stats_ts = time.monotonic()
+        stats_frames = 0
+        stats_discarded = 0
 
     time.sleep(0.01)
