@@ -5,6 +5,13 @@
 # alla posizione di inizio del frame dentro al buffer.
 ROOM_FRAME_LEN = 43
 FLOOR_FRAME_LEN = 73
+# La scheda deumidifica non viene interrogata: il pannello le SCRIVE lo stato
+# con la funzione 0x10 (11 byte di richiesta) e la scheda risponde con l'eco
+# (8 byte). Il ciclo si ripete ogni ~25 secondi.
+DEHUMIDIFIER_FRAME_LEN = 19
+# Registro che porta lo stato della deumidifica: 1 = attiva, 0 = ferma.
+# Il pannello scrive anche i registri 11 e 13, che qui non interessano.
+DEHUMIDIFIER_STATE_REGISTER = 10
 
 def crc16_modbus(data: bytes) -> int:
     crc = 0xFFFF
@@ -139,5 +146,75 @@ def parse_modbus_floor(data):
         relay_8 = 1 if relay_8_raw != 0 else 0
 
         return (frame[0], temp_flow, temp_return, temp_delta_t, perc_circulator, perc_mix, relay_1, relay_2, relay_3, relay_4, relay_5, relay_6, relay_7, relay_8, i + TOTAL_LEN)
+
+    return None
+
+def parse_modbus_dehumidifier(data):
+    """
+    Cerca la scrittura (funzione 0x10) con cui il pannello comanda lo stato
+    della scheda deumidifica, seguita dall'eco di conferma della scheda.
+    Restituisce (slave, stato, end_idx) oppure None.
+
+    Struttura dei 19 byte:
+      [0]      indirizzo slave          [11]     indirizzo slave (eco)
+      [1]      funzione 0x10            [12]     funzione 0x10
+      [2:4]    registro scritto         [13:15]  registro scritto
+      [4:6]    numero registri (1)      [15:17]  numero registri (1)
+      [6]      byte count (2)           [17:19]  CRC
+      [7:9]    valore
+      [9:11]   CRC
+    """
+    TOTAL_LEN = DEHUMIDIFIER_FRAME_LEN
+    i = 0
+    while i <= len(data) - TOTAL_LEN:
+
+        # Controllo funzione prima della slice, come negli altri parser
+        if data[i+1] != 0x10:
+            i += 1
+            continue
+
+        frame = data[i:i+TOTAL_LEN]
+
+        # Deve scrivere UN solo registro, quello di stato, con 2 byte di dato.
+        # Il pannello scrive anche i registri 11 e 13, che vanno scartati qui.
+        if (frame[2] << 8 | frame[3]) != DEHUMIDIFIER_STATE_REGISTER:
+            i += 1
+            continue
+        if (frame[4] << 8 | frame[5]) != 1 or frame[6] != 2:
+            i += 1
+            continue
+
+        # --- CRC della richiesta ---
+        if (frame[9] | (frame[10] << 8)) != crc16_modbus(frame[0:9]):
+            i += 1
+            continue
+
+        # --- Eco della scheda: stesso slave, stessa funzione, stesso registro ---
+        # Serve anche a distinguere le schede realmente presenti da quelle che
+        # il pannello comanda pur non essendo installate: quelle non rispondono.
+        echo = frame[11:]
+        if echo[0] != frame[0] or echo[1] != 0x10:
+            i += 1
+            continue
+        if (echo[2] << 8 | echo[3]) != DEHUMIDIFIER_STATE_REGISTER:
+            i += 1
+            continue
+        if (echo[4] << 8 | echo[5]) != 1:
+            i += 1
+            continue
+        if (echo[6] | (echo[7] << 8)) != crc16_modbus(echo[0:6]):
+            i += 1
+            continue
+
+        # Lo stato e' acceso/spento. Il registro 10 viene scritto anche alle
+        # room (set point attivo) e alle floor (350): scartando tutto cio' che
+        # non e' 0 o 1 restano solo le vere schede a rele'. Se un domani una
+        # scheda usasse altri valori, meglio nessun dato che un dato inventato.
+        state = (frame[7] << 8) | frame[8]
+        if state > 1:
+            i += 1
+            continue
+
+        return (frame[0], state, i + TOTAL_LEN)
 
     return None

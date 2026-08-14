@@ -1,6 +1,6 @@
 ---
 name: Templari Modbus Sniffer
-version: 1.0.2
+version: 1.1.0
 slug: templari_modbus_sniffer
 description: "Sniffer Modbus Templari"
 url: https://github.com/wergio/addon-templari-modbus-sniffer
@@ -58,6 +58,7 @@ options:
       relay_6_sensor: true
       relay_7_sensor: true
       relay_8_sensor: true
+  dehumidifier_id: ""
   mqtt_host: "core-mosquitto"
   mqtt_port: 1883
   mqtt_user: ""
@@ -84,6 +85,7 @@ schema:
       relay_6_sensor: bool?
       relay_7_sensor: bool?
       relay_8_sensor: bool?
+  dehumidifier_id: int(1,247)?
   mqtt_host: str
   mqtt_port: int
   mqtt_user: str

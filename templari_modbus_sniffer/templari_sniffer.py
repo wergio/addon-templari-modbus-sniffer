@@ -99,8 +99,33 @@ LOG_ENABLED = options.get("log_enabled", False)
 seen_ids = {}
 ROOMS = valid_devices(options.get("rooms", []), "room", seen_ids)
 FLOORS = valid_devices(options.get("floors", []), "floor", seen_ids)
-if not ROOMS and not FLOORS:
-    config_error("nessuna room o floor valida configurata, non c'e' nulla da monitorare")
+
+# La scheda deumidifica e' sempre una sola, quindi e' un singolo id opzionale e
+# non una lista. Come per le singole voci di room e floor, un valore sbagliato
+# disabilita solo questo sensore invece di fermare l'addon.
+DEHUMIDIFIER_ID = options.get("dehumidifier_id")
+if DEHUMIDIFIER_ID in (None, ""):
+    DEHUMIDIFIER_ID = None
+else:
+    try:
+        DEHUMIDIFIER_ID = int(DEHUMIDIFIER_ID)
+    except (TypeError, ValueError):
+        config_warning(f"dehumidifier_id: '{DEHUMIDIFIER_ID}' non e' un numero, deumidifica ignorata")
+        DEHUMIDIFIER_ID = None
+    else:
+        if not MODBUS_ID_MIN <= DEHUMIDIFIER_ID <= MODBUS_ID_MAX:
+            config_warning(f"dehumidifier_id: {DEHUMIDIFIER_ID} fuori dall'intervallo Modbus "
+                           f"{MODBUS_ID_MIN}-{MODBUS_ID_MAX}, deumidifica ignorata")
+            DEHUMIDIFIER_ID = None
+        elif DEHUMIDIFIER_ID in seen_ids:
+            config_warning(f"dehumidifier_id: {DEHUMIDIFIER_ID} gia' usato da "
+                           f"{seen_ids[DEHUMIDIFIER_ID]}, deumidifica ignorata")
+            DEHUMIDIFIER_ID = None
+        else:
+            seen_ids[DEHUMIDIFIER_ID] = "deumidifica"
+
+if not ROOMS and not FLOORS and DEHUMIDIFIER_ID is None:
+    config_error("nessuna room, floor o deumidifica valida configurata, non c'e' nulla da monitorare")
 
 LOGFILE = "/homeassistant/modbus_templari_sniffer.log"
 
@@ -127,7 +152,9 @@ RECONNECT_BACKOFF = 5
 # potrebbe contenere un frame ancora incompleto.
 # Va ricavato dal massimo delle lunghezze gestite: se un domani si aggiunge un
 # parser per frame piu' lunghi, questo deve crescere con lui.
-BUFFER_KEEP = max(modbus_parsing.ROOM_FRAME_LEN, modbus_parsing.FLOOR_FRAME_LEN) - 1
+BUFFER_KEEP = max(modbus_parsing.ROOM_FRAME_LEN,
+                  modbus_parsing.FLOOR_FRAME_LEN,
+                  modbus_parsing.DEHUMIDIFIER_FRAME_LEN) - 1
 # Ogni quanti secondi riportare quanto traffico non riconosciuto passa sul bus.
 STATS_INTERVAL = 3600
 
@@ -218,6 +245,9 @@ if ROOMS:
 if FLOORS:
     floor_list_str = ", ".join(f"{fid} ({floor_by_id[fid]['name']})" for fid in floor_ids)
     print(f"[{datetime.now().isoformat()}] Monitoraggio FLOOR: {floor_list_str}")
+
+if DEHUMIDIFIER_ID is not None:
+    print(f"[{datetime.now().isoformat()}] Monitoraggio DEUMIDIFICA: {DEHUMIDIFIER_ID}")
 
 # --- AUTOGENERAZIONE SENSORI MQTT HOME ASSISTANT ---
 if AUTOGEN_MQTT:
@@ -341,7 +371,25 @@ if AUTOGEN_MQTT:
                 result = client.publish(topic, json.dumps(payload), retain=True)
                 if result.rc != mqtt.MQTT_ERR_SUCCESS:
                     print(f"[{datetime.now().isoformat()}] ERROR publishing discovery for sensor {payload['unique_id']}")
-            
+
+    # La deumidifica e' una sola: l'id non entra nel topic ne' nell'unique_id,
+    # cosi' cambiarlo in configurazione non lascia entita' orfane in HA.
+    if DEHUMIDIFIER_ID is not None:
+        topic = f"homeassistant/binary_sensor/{MQTT_PREFIX}_dehumidifier_state/config"
+        payload = {
+            "unique_id": f"{MQTT_PREFIX}_dehumidifier_state",
+            "default_entity_id": f"binary_sensor.{MQTT_PREFIX}_dehumidifier_state",
+            "name": "Deumidifica",
+            "state_topic": f"{MQTT_PREFIX}/dehumidifier/state",
+            "payload_on": "1",
+            "payload_off": "0",
+            "device_class": "running",
+            "expire_after": 300
+        }
+        result = client.publish(topic, json.dumps(payload), retain=True)
+        if result.rc != mqtt.MQTT_ERR_SUCCESS:
+            print(f"[{datetime.now().isoformat()}] ERROR publishing discovery for sensor {payload['unique_id']}")
+
     print(f"[{datetime.now().isoformat()}] Generati automaticamente sensori MQTT")
     
 # --- LOOP PRINCIPALE ---
@@ -403,18 +451,35 @@ while True:
 
         # I parser scandiscono TUTTO il buffer, quindi vanno provati
         # tutti e va consumato il frame che inizia PRIMA.
-        parsed_room = modbus_parsing.parse_modbus_room(buffer)
-        parsed_floor = modbus_parsing.parse_modbus_floor(buffer)
+        candidates = []
+        for kind, parse, frame_len in (
+            ("room", modbus_parsing.parse_modbus_room, modbus_parsing.ROOM_FRAME_LEN),
+            ("floor", modbus_parsing.parse_modbus_floor, modbus_parsing.FLOOR_FRAME_LEN),
+            ("dehumidifier", modbus_parsing.parse_modbus_dehumidifier, modbus_parsing.DEHUMIDIFIER_FRAME_LEN),
+        ):
+            parsed = parse(buffer)
+            if parsed is not None:
+                candidates.append((parsed[-1] - frame_len, kind, parsed))
 
-        start_room = parsed_room[-1] - modbus_parsing.ROOM_FRAME_LEN if parsed_room is not None else None
-        start_floor = parsed_floor[-1] - modbus_parsing.FLOOR_FRAME_LEN if parsed_floor is not None else None
+        if not candidates:
+            # Nessun frame agganciato: tutto quello che precede la coda e' gia'
+            # stato testato senza successo e non potra' mai diventare valido,
+            # quindi si puo' buttare. Senza questa potatura il buffer cresce fino
+            # al prossimo frame utile, e i parser lo riscandiscono tutto a ogni
+            # recv (misurato: 6 KB di picco e 44x di CPU in piu').
+            if len(buffer) > BUFFER_KEEP:
+                stats_discarded += len(buffer) - BUFFER_KEEP
+                buffer = buffer[-BUFFER_KEEP:]
+            break
 
-        if parsed_room is not None and (parsed_floor is None or start_room <= start_floor):
+        _, kind, parsed = min(candidates, key=lambda c: c[0])
+        buffer = buffer[parsed[-1]:]
+        last_frame_ts = time.monotonic()
+        stats_frames += 1
 
-            slave, temp, hum, dew, set, req, end_idx = parsed_room
-            buffer = buffer[end_idx:]
-            last_frame_ts = time.monotonic()
-            stats_frames += 1
+        if kind == "room":
+
+            slave, temp, hum, dew, set, req, end_idx = parsed
 
             if slave in room_ids:
                 ts = datetime.now().isoformat()
@@ -427,12 +492,9 @@ while True:
             
                 print(f"[{ts}] [Room {slave} {room_by_id[slave]['name']}] Temp={temp}°C Hum={hum}% Dew={dew}°C Set Point={set}°C Req={req}")
 
-        elif parsed_floor is not None:
+        elif kind == "floor":
 
-            slave, temp_flow, temp_return, temp_delta_t, perc_circulator, perc_mix, relay_1, relay_2, relay_3, relay_4, relay_5, relay_6, relay_7, relay_8, end_idx = parsed_floor
-            buffer = buffer[end_idx:]
-            last_frame_ts = time.monotonic()
-            stats_frames += 1
+            slave, temp_flow, temp_return, temp_delta_t, perc_circulator, perc_mix, relay_1, relay_2, relay_3, relay_4, relay_5, relay_6, relay_7, relay_8, end_idx = parsed
 
             if slave in floor_ids:
                 ts = datetime.now().isoformat()
@@ -473,16 +535,16 @@ while True:
             
                 print(f"[{ts}] [Floor {slave} {floor_by_id[slave]['name']}] Flow={temp_flow}°C Return={temp_return}°C DeltaT={temp_delta_t}°C Circulator={perc_circulator}% Mix={perc_mix}% Relays={relay_1} {relay_2} {relay_3} {relay_4} {relay_5} {relay_6} {relay_7} {relay_8}")
 
-        else:
-            # Nessun frame agganciato: tutto quello che precede la coda e' gia'
-            # stato testato senza successo e non potra' mai diventare valido,
-            # quindi si puo' buttare. Senza questa potatura il buffer cresce fino
-            # al prossimo frame utile, e i parser lo riscandiscono tutto a ogni
-            # recv (misurato: 6 KB di picco e 46x di CPU in piu').
-            if len(buffer) > BUFFER_KEEP:
-                stats_discarded += len(buffer) - BUFFER_KEEP
-                buffer = buffer[-BUFFER_KEEP:]
-            break
+        elif kind == "dehumidifier":
+
+            slave, state, end_idx = parsed
+
+            if slave == DEHUMIDIFIER_ID:
+                ts = datetime.now().isoformat()
+
+                safe_publish(f"{MQTT_PREFIX}/dehumidifier/state", state)
+
+                print(f"[{ts}] [Deumidifica {slave}] Stato={state}")
 
     if time.monotonic() - last_stats_ts >= STATS_INTERVAL:
         print(f"[{datetime.now().isoformat()}] Statistiche ultima ora: {stats_frames} frame decodificati, "

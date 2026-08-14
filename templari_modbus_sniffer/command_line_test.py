@@ -16,6 +16,7 @@ if __name__ == "__main__":
 
     resultr = modbus_parsing.parse_modbus_room(data)
     resultf = modbus_parsing.parse_modbus_floor(data)
+    resultd = modbus_parsing.parse_modbus_dehumidifier(data)
     if resultr:
         print("Trovata corrispondenza ROOM:")
         slave, temp, hum, dew, set, req, len = resultr
@@ -43,8 +44,15 @@ if __name__ == "__main__":
         print("Rele' 5:", relay_5)        
         print("Rele' 6:", relay_6)        
         print("Rele' 7:", relay_7)        
-        print("Rele' 8:", relay_8)        
-        print("Lunghezza frame rilevato:", len, "byte")        
+        print("Rele' 8:", relay_8)
+        print("Lunghezza frame rilevato:", len, "byte")
+
+    elif resultd:
+        print("Trovata corrispondenza DEUMIDIFICA:")
+        slave, state, len = resultd
+        print("ID DEUMIDIFICA:", slave)
+        print("Stato:", state, "(1 = attiva, 0 = ferma)")
+        print("Lunghezza frame rilevato:", len, "byte")
 
     else:
         print("Nessun frame valido trovato")
