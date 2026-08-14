@@ -1,10 +1,23 @@
 # Changelog
 
+## 1.1.0
+
+### Novità
+
+- Gestione della scheda **deumidifica** (opzionale): vi crea il binary sensor
+  `binary_sensor.templari_dehumidifier_state`, che riporta se la deumidifica è
+  in funzione o ferma.
+
+> Se non vedi la nuova opzione nella pagina di configurazione, attiva il
+> selettore **"Mostra le opzioni di configurazione facoltative non utilizzate"**
+> in fondo alla pagina: essendo facoltativa e senza valore, Home Assistant la
+> nasconde finché non le assegni un id.
+
 ## 1.0.2
 
 ### Ottimizzazioni
 
-- varie migliorie al codici per evitare disconnessioni e per occupare meno
+- varie migliorie al codice per evitare disconnessioni e per occupare meno
   processore e memoria
 
 ## 1.0.1
